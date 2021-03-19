@@ -142,7 +142,7 @@ func loginResponse(c *gin.Context) {
 	user, ok := keys[name]
 	if !ok {
 		log.Println("==== 未註冊 ====")
-		c.JSON(200, "not register")
+		c.JSON(403, "not register")
 		return
 	}
 
@@ -155,7 +155,7 @@ func loginResponse(c *gin.Context) {
 	cred, err := auth.FinishLogin(user, *session, c.Request)
 	if err != nil {
 		log.Printf("===== 解析登入憑證失敗 =====\n%+v\n", err)
-		c.String(200, "Request Invalid: %s", err.Error())
+		c.String(403, "Request Invalid: %s", err.Error())
 		return
 	}
 

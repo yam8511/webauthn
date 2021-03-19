@@ -69,13 +69,18 @@ async function login() {
     //     }
     // }
 
-    await fetch(`/loginResponse?name=${name}`, {
+    let res = await fetch(`/loginResponse?name=${name}`, {
         method: 'POST',
         headers: {
             "Content-Type": "application/json"
         },
         body: JSON.stringify(credential)
     });
+    if (res.status === 200) {
+        window.alert('登入成功')
+    } else {
+        window.alert('登入失敗')
+    }
     console.groupEnd()
 }
 
