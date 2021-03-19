@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 
 	"github.com/duo-labs/webauthn/protocol"
 	"github.com/duo-labs/webauthn/webauthn"
@@ -44,7 +47,7 @@ func (this *User) WebAuthnDisplayName() string {
 
 // User's icon url
 func (this *User) WebAuthnIcon() string {
-	return rpIcon
+	return ""
 }
 
 // Credentials owned by the user
@@ -56,14 +59,22 @@ var keys = make(map[string]*User)
 var registers = make(map[string]*webauthn.SessionData)
 var logins = make(map[string]*webauthn.SessionData)
 
-const rpIcon = "https://8cbbf92b9e64.ngrok.io/favicon.ico"
+func newAuthn(c *gin.Context) (*webauthn.WebAuthn, error) {
+	link, err := url.Parse(c.Request.Referer())
+	if err != nil {
+		return nil, err
+	}
 
-func newAuthn() (*webauthn.WebAuthn, error) {
+	hostname := link.Hostname()
+	origin := link.String()
+	link.Path = "favicon.ico"
+	icon := link.String()
+
 	auth, err := webauthn.New(&webauthn.Config{
-		RPDisplayName:         "Zuolar WebAuthn",               // Display Name for your site
-		RPID:                  "8cbbf92b9e64.ngrok.io",         // Generally the FQDN for your site
-		RPIcon:                rpIcon,                          // Optional icon URL for your site
-		RPOrigin:              "https://8cbbf92b9e64.ngrok.io", // The origin URL for WebAuthn requests
+		RPDisplayName:         "Zuolar WebAuthn", // Display Name for your site
+		RPID:                  hostname,          // Generally the FQDN for your site
+		RPIcon:                icon,              // Optional icon URL for your site
+		RPOrigin:              origin,            // The origin URL for WebAuthn requests
 		Timeout:               1800000,
 		Debug:                 true,
 		AttestationPreference: protocol.PreferNoAttestation,
@@ -93,7 +104,7 @@ func main() {
 }
 
 func loginRequest(c *gin.Context) {
-	auth, err := newAuthn()
+	auth, err := newAuthn(c)
 	if err != nil {
 		log.Printf("Create Authn Failed: %s\n", err.Error())
 		c.String(500, "Create Authn Failed: %s", err.Error())
@@ -120,7 +131,7 @@ func loginRequest(c *gin.Context) {
 }
 
 func loginResponse(c *gin.Context) {
-	auth, err := newAuthn()
+	auth, err := newAuthn(c)
 	if err != nil {
 		log.Printf("Create Authn Failed: %s\n", err.Error())
 		c.String(500, "Create Authn Failed: %s", err.Error())
@@ -149,36 +160,56 @@ func loginResponse(c *gin.Context) {
 	}
 
 	log.Println("======= 憑證登入成功 ========")
-	log.Printf("%#v", *cred)
+	id, _ := json.Marshal(cred.ID)
+	pub, _ := json.Marshal(cred.PublicKey)
+	log.Printf("ID = %s", string(id))
+	log.Printf("PubKey = %s", string(pub))
+
 	c.JSON(200, *cred)
 }
 
 func registerRequest(c *gin.Context) {
-	auth, err := newAuthn()
+	auth, err := newAuthn(c)
 	if err != nil {
 		log.Printf("Create Authn Failed: %s\n", err.Error())
 		c.String(500, "Create Authn Failed: %s", err.Error())
 		return
 	}
 
+	opt := []webauthn.RegistrationOption{}
 	name := c.Query("name")
-	user := newUser(name)
+	user, ok := keys[name]
+	if !ok {
+		user = newUser(name)
+		keys[name] = user
+	} else {
+		ex := []protocol.CredentialDescriptor{}
+		for _, cr := range user.WebAuthnCredentials() {
+			ex = append(ex, protocol.CredentialDescriptor{
+				CredentialID: cr.ID,
+				Type:         protocol.PublicKeyCredentialType,
+				Transport: []protocol.AuthenticatorTransport{
+					protocol.Internal,
+				},
+			})
+		}
+		opt = append(opt, webauthn.WithExclusions(ex))
+	}
 
-	credOpt, session, err := auth.BeginRegistration(user)
+	credOpt, session, err := auth.BeginRegistration(user, opt...)
 	if err != nil {
 		log.Printf("BeginRegistration Failed: %s\n", err.Error())
 		c.String(200, "BeginRegistration Failed: %s", err.Error())
 		return
 	}
 
-	keys[name] = user
 	registers[user.WebAuthnName()] = session
 	// 回傳給前端建立憑證的參數
 	c.JSON(200, credOpt)
 }
 
 func registerResponse(c *gin.Context) {
-	auth, err := newAuthn()
+	auth, err := newAuthn(c)
 	if err != nil {
 		log.Printf("Create Authn Failed: %s\n", err.Error())
 		c.String(500, "Create Authn Failed: %s", err.Error())
@@ -206,7 +237,10 @@ func registerResponse(c *gin.Context) {
 	}
 
 	log.Println("======= 解析憑證成功 ========")
-	log.Printf("%#v", *cred)
+	id, _ := json.Marshal(cred.ID)
+	pub, _ := json.Marshal(cred.PublicKey)
+	log.Printf("ID = %s", string(id))
+	log.Printf("PubKey = %s", string(pub))
 	user.creds = append(user.creds, *cred)
 
 	c.JSON(200, cred)
@@ -231,9 +265,17 @@ func removeKeys(c *gin.Context) {
 	}
 
 	id := c.Query("cred")
+	log.Println("刪除 => ", id)
+	credID := []byte{}
+	err := json.Unmarshal([]byte(`"`+id+`"`), &credID)
+	if !ok {
+		c.JSON(500, err)
+		return
+	}
 
 	for i, cr := range user.creds {
-		if string(cr.ID) == id {
+		if bytes.Equal(cr.ID, credID) {
+			log.Println("Got => ", i)
 			user.creds = append(user.creds[:i], user.creds[i+1:]...)
 			break
 		}

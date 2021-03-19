@@ -104,7 +104,7 @@ async function remove(id) {
     let c = window.prompt("確定刪除？", "false")
     console.log("confirm", c)
     if (c == "y" || c == "Y" || c == "true") {
-        let body = await fetch(`/removeKeys?name=${name}&cred=${id}`).then(res => res.json());
+        let body = await fetch(`/removeKeys?name=${name}&cred=${encodeURIComponent(id)}`).then(res => res.json());
     }
     getCredentials()
 }
